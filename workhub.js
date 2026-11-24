@@ -17,7 +17,7 @@
   const { $, esc, icon, fmtDate, fmtTime, when } = L;
   const RUN = "Apps/Phone runner";
   const FRESH_MIN = 10;
-  const ON_MIN = 5;
+  const ON_MIN = 9;            // seen.json every 2 minutes, and OneDrive can take a few minutes to pass it on
   const WHO = { script: "Script", claude: "Claude", you: "You", college: "College" };
   const REPEAT = { weekly: "Weekly", fortnightly: "Fortnightly", daily: "Daily", "as-needed": "As needed", quarterly: "Quarterly", yearly: "Yearly" };
   const STAGE_NAME = { A: "Next block's units", B: "Week before", C: "Teaching weeks", D: "Final week", E: "After the block", H: "Holiday block" };
@@ -26,10 +26,12 @@
   const S = {
     pair: L.lsGet("hub.pair", null), snap: L.lsGet("hub.snap", null), snapTag: L.lsGet("hub.snapTag", ""), seen: L.lsGet("hub.seen", null),
     computers: null, runs: L.lsGet("hub.runs", []), ticks: L.lsGet("hub.ticks", []), view: L.lsGet("hub.view", "block"),
-    open: null, pairing: null, loading: false, problem: null, readAt: 0, links: {}, expanded: L.lsGet("hub.expanded", {}),
+    open: null, pairing: L.lsGet("hub.pairing", null), loading: false, problem: null, readAt: 0, links: {}, expanded: L.lsGet("hub.expanded", {}),
   };
   const saveRuns = () => L.lsSet("hub.runs", S.runs.slice(0, 40));
   const saveTicks = () => L.lsSet("hub.ticks", S.ticks);
+  const savePairing = () => L.lsSet("hub.pairing", S.pairing && (S.pairing.state === "waiting" || S.pairing.state === "sending") && S.pairing.id
+    ? { id: S.pairing.id, code: S.pairing.code, at: S.pairing.at, state: "waiting" } : null);
 
   /* ---------- signing, the same text Phone runner checks (core.js signedText) ---------- */
   const b64url = (buf) => { const b = new Uint8Array(buf); let s = ""; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
@@ -54,7 +56,7 @@
     if (S.loading) return;
     S.loading = true; renderTop();
     try {
-      if (!S.pair) S.computers = await findComputers();
+      if (!S.pair) { S.computers = await findComputers(); await resumePairing(); }
       const pc = mine();
       if (pc) {
         const [seen, it] = await Promise.all([
@@ -72,7 +74,7 @@
     } catch (e) {
       if (e && e.code === "signin") { S.loading = false; window.dispatchEvent(new CustomEvent("le:signin")); return; }
       S.problem = L.problemFor(e);
-    } finally { S.loading = false; render(); }
+    } finally { S.loading = false; render(); schedule(); }
   }
 
   /* ---------- runs ---------- */
@@ -121,7 +123,7 @@
       await G.putJson(RUN + "/requests/" + L.stamp(at) + "-" + q.id + ".json", q, { create: true });
       r.state = "waiting";
       const on = laptopOn();
-      L.toast(on ? "Sent. It starts on " + pc + " within a minute." : "Sent, but " + pc + " looks asleep. It runs only if the laptop picks it up within " + FRESH_MIN + " minutes.");
+      L.toast(on ? "Sent. It starts on " + pc + " in a minute or two, and its answer shows here a few minutes later." : "Sent, but " + pc + " looks asleep. It runs only if the laptop picks it up within " + FRESH_MIN + " minutes.");
     } catch (e) {
       r.state = "notsent"; r.message = "Not sent. " + L.problemFor(e);
       if (e && e.code === "signin") window.dispatchEvent(new CustomEvent("le:signin"));
@@ -140,13 +142,25 @@
       const at = L.nowIso();
       await L.idbSet("phone-key-pending", { id, privateKey: kp.privateKey, publicJwk: pub, created: at });
       S.pairing = { id, code: await pairCode(pub), at, state: "sending" };
-      render();
+      savePairing(); render();
       await G.putJson(RUN + "/pairing/" + id + ".json", { id, name: phoneName(), at, public_jwk: pub }, { create: true });
-      S.pairing.state = "waiting";
+      S.pairing.state = "waiting"; savePairing();
     } catch (e) {
       S.pairing = { state: "error", message: e && e.name === "NotSupportedError" ? "This phone can't make the pairing key." : L.problemFor(e) };
+      savePairing();
     }
     render(); schedule();
+  }
+  /* A pairing this phone started, perhaps before the app was closed: carry on with it. */
+  async function resumePairing() {
+    if (S.pair) return;
+    if (!S.pairing || !S.pairing.id) {
+      const k = await L.idbGet("phone-key-pending").catch(() => null);
+      if (k && k.id && k.publicJwk && Date.now() - Date.parse(k.created) < 86400000) {
+        S.pairing = { id: k.id, code: await pairCode(k.publicJwk), at: k.created, state: "waiting" };
+      }
+    }
+    if (S.pairing && S.pairing.state === "waiting") await checkPairing();
   }
   async function checkPairing() {
     const p = S.pairing;
@@ -159,20 +173,22 @@
         await L.idbSet("phone-key", k); await L.idbSet("phone-key-pending", null);
         S.pair = { phone: p.id, computer: String(reply.data.computer || ""), at: reply.data.at };
         L.lsSet("hub.pair", S.pair);
-        S.pairing = null; S.snapTag = "";
+        S.pairing = null; savePairing(); S.snapTag = "";
         L.toast("Paired with " + S.pair.computer + ". Jobs you press here start there.");
         load();
         return;
       }
+      await L.idbSet("phone-key-pending", null).catch(() => {});
       S.pairing = { state: "refused", message: "The laptop said Not mine, so nothing was paired." };
-    } else if (Date.now() - Date.parse(p.at) > FRESH_MIN * 60000) {
-      S.pairing = { state: "error", message: "The laptop didn't answer within " + FRESH_MIN + " minutes. Is Pair my phone open on it?" };
+    } else if (Date.now() - Date.parse(p.at) > 15 * 60000) {
+      await L.idbSet("phone-key-pending", null).catch(() => {});
+      S.pairing = { state: "error", message: "No answer from the laptop after 15 minutes. Open Pair my phone on it, then start again here." };
     }
-    render();
+    savePairing(); render();
   }
   async function unpair() {
     await L.idbSet("phone-key", null).catch(() => {});
-    S.pair = null; L.lsSet("hub.pair", null); S.snap = null; S.snapTag = ""; L.lsSet("hub.snap", null); L.lsSet("hub.snapTag", "");
+    S.pair = null; L.lsSet("hub.pair", null); S.pairing = null; savePairing(); S.snap = null; S.snapTag = ""; L.lsSet("hub.snap", null); L.lsSet("hub.snapTag", "");
     S.computers = null; render(); load();
   }
 
@@ -334,7 +350,7 @@
     const found = S.computers && S.computers.length ? S.computers[0].name : null;
     if (p && (p.state === "waiting" || p.state === "sending")) {
       return '<section class="pair"><p class="plate">Pairing</p><h2>Check the laptop shows</h2><p class="code">' + esc(p.code) + "</p>" +
-        "<p>On the laptop, the Pair my phone window shows six digits within a minute. If they match these, press <b>That's my phone</b> there.</p>" +
+        "<p>On the laptop, the Pair my phone window shows six digits within a minute or two. If they match these, press <b>That's my phone</b> there. Its answer comes back through OneDrive, which can take a few minutes, and this page keeps checking.</p>" +
         '<p class="wait"><span class="l on pulse"></span>' + (p.state === "sending" ? "Sending to OneDrive" : "Waiting for the laptop") + '</p><button type="button" class="hbtn ghost" data-hpair="cancel">Cancel</button></section>';
     }
     if (S.computers && !found) {
@@ -405,7 +421,8 @@
   const RUN_STATE = { sending: "Sending", waiting: "Waiting for the laptop", started: "Started", missed: "Missed", refused: "Didn't start", notsent: "Not sent" };
   function runsView() {
     if (!S.runs.length) return '<div class="h-empty"><b>Nothing run from here yet</b>Jobs you start from this phone show here, with what the laptop said.</div>';
-    return '<ul class="runs">' + S.runs.map((r) => '<li class="run ' + esc(r.state) + '"><span class="l ' + ({ started: "on", waiting: "on pulse", sending: "on pulse", missed: "bad", refused: "bad", notsent: "bad" }[r.state] || "off") + '"></span><div><p class="rt">' + esc(r.title) +
+    const waiting = S.runs.some((r) => r.state === "waiting");
+    return (waiting ? '<p class="h-note">The laptop starts a job a minute or two after you press it. Its answer comes back through OneDrive and can take a few more minutes to show here.</p>' : "") + '<ul class="runs">' + S.runs.map((r) => '<li class="run ' + esc(r.state) + '"><span class="l ' + ({ started: "on", waiting: "on pulse", sending: "on pulse", missed: "bad", refused: "bad", notsent: "bad" }[r.state] || "off") + '"></span><div><p class="rt">' + esc(r.title) +
       (r.label && r.label !== r.title ? ' <span class="rl">' + esc(r.label) + "</span>" : "") + '</p><p class="rs"><b>' + esc(RUN_STATE[r.state] || r.state) + "</b> · " + esc(when(r.at)) + " on " + esc(r.computer) + "</p>" +
       (r.message && r.state !== "started" ? '<p class="rm">' + esc(r.message) + "</p>" : "") + "</div></li>").join("") + "</ul>";
   }
@@ -530,7 +547,11 @@
     const ex = t.closest("[data-hexp]");
     if (ex) { const id = ex.getAttribute("data-hexp"); S.expanded[id] = ex.getAttribute("aria-expanded") !== "true"; L.lsSet("hub.expanded", S.expanded); renderMain(); return; }
     const pr = t.closest("[data-hpair]");
-    if (pr) { if (pr.getAttribute("data-hpair") === "start") startPairing(); else { S.pairing = null; render(); } return; }
+    if (pr) {
+      if (pr.getAttribute("data-hpair") === "start") startPairing();
+      else { S.pairing = null; savePairing(); L.idbSet("phone-key-pending", null).catch(() => {}); render(); }
+      return;
+    }
     const rn = t.closest("[data-hrun]");
     if (rn) {
       const [where, id, index] = rn.getAttribute("data-hrun").split("|");

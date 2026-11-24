@@ -3,7 +3,7 @@
   "use strict";
   const L = window.LE, A = window.LEAuth;
   const { $, esc } = L;
-  const VERSION = "1.0.0";
+  const VERSION = "1.0.1";
   const THEME = { board: "#18211c", hub: "#0c131d" };
   let tab = L.lsGet("tab", "board");
   let started = false;

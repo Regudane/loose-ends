@@ -260,6 +260,7 @@ a{color:inherit}
 .h-empty{margin:18px;padding:22px 20px;border-radius:14px;border:1.5px dashed var(--h-line);color:var(--h-soft);font-size:15px}
 .h-empty b{display:block;color:var(--h-text);font-size:18px;margin-bottom:4px}
 .h-foot{margin:22px 18px 30px;font-size:13px;color:var(--h-faint)}
+.h-note{margin:12px 18px 0;font-size:13.5px;color:var(--h-soft)}
 .hol{margin:14px 18px 0;padding:16px;border-radius:16px;background:linear-gradient(140deg,#21324a,#152234);border:1px solid var(--h-line)}
 .hol .plate{margin:0;font-size:12px;font-weight:850;font-stretch:72%;letter-spacing:.16em;text-transform:uppercase;color:var(--amber)}
 .hol h2{margin:4px 0 6px;font-size:24px;font-weight:820;font-stretch:84%}
