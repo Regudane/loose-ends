@@ -45,6 +45,38 @@
   }
   function copyText(text) { try { const p = navigator.clipboard && navigator.clipboard.writeText(text); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
   const chatLink = (url) => { const m = /^https:\/\/claude\.ai\/(chat\/[0-9a-f-]{36}|code\/session_[A-Za-z0-9_-]{8,80})\/?$/i.exec(String(url || "").trim()); return m ? "https://claude.ai/" + m[1] : null; };
+  /* Chat links (1.4.1, 25 Nov 2026): a chat that works on a computer can give its session's link
+     (claude.ai/code/session_...) instead of its own claude.ai/chat link, and only the chat's own link opens it in
+     the Claude app and takes a reply from the laptop. board.py keeps which chat each session belongs to in
+     meta.chat_links (a note's "relink" adds to it), and swaps them on save. The same swap here, so a note filed
+     since still shows the chat's own link. */
+  const SESSION_LINK = /^https:\/\/claude\.ai\/code\/session_[A-Za-z0-9_-]{8,80}$/, CHAT_LINK = /^https:\/\/claude\.ai\/chat\/[0-9a-fA-F-]{36}$/;
+  const linkKey = (u) => (typeof u === "string" ? u.trim().replace(/[?#].*$/, "").replace(/\/+$/, "") : "");
+  const tms = (s) => { const d = parseDate(s); return d ? d.getTime() : 0; };
+  function chatLinks(meta, notes) {
+    const out = {};
+    const take = (pairs) => { if (pairs && typeof pairs === "object") Object.keys(pairs).forEach((k) => { const a = linkKey(k), b = linkKey(pairs[k]); if (SESSION_LINK.test(a) && CHAT_LINK.test(b)) out[a] = b; }); };
+    take(meta && meta.chat_links);
+    (notes || []).slice().sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0)).forEach((n) => take(n.data && n.data.relink));
+    return out;
+  }
+  function relink(cards, links) {
+    if (!Object.keys(links).length) return;
+    const swap = (u) => (typeof u === "string" && links[linkKey(u)]) || u;
+    cards.forEach((c) => {
+      if (typeof c.chat_url === "string") c.chat_url = swap(c.chat_url);
+      if (!Array.isArray(c.chats)) return;
+      const out = [];
+      c.chats.forEach((x) => {
+        if (!x || typeof x !== "object") { out.push(x); return; }
+        const y = Object.assign({}, x, "url" in x ? { url: swap(x.url) } : {});
+        const hit = y.url ? out.find((o) => o && typeof o === "object" && o.url === y.url) : null;
+        if (!hit) out.push(y);
+        else if (tms(y.last_touched) > tms(hit.last_touched)) Object.assign(hit, y);
+      });
+      c.chats = out;
+    });
+  }
 
   const S = { base: null, changes: {}, phoneServer: { edits: {}, added: {} }, pending: [], notes: [], cards: [], meta: {},
     view: L.lsGet("board.view", "all"), q: "", open: null, readAt: null, cachedAt: null, problem: null, loading: false, snz: false, reply: null };
@@ -108,6 +140,7 @@
     if (!S.base) return;
     const merged = M.mergeBoard(S.base, Object.assign({}, S.changes, { phone: phoneView() }), S.notes);
     S.cards = merged.cards; S.meta = merged.meta || {};
+    relink(S.cards, chatLinks(S.meta, S.notes));
     window.dispatchEvent(new CustomEvent("le:counts", { detail: { you: counts().you } }));
   }
   function remember() { L.lsSet("board", { at: S.readAt, base: S.base, changes: S.changes, phone: S.phoneServer, notes: S.notes }); }
@@ -337,7 +370,8 @@
   }
   /* ---------- replies (1.4.0, 25 Nov 2026) ---------- */
   /* A reply goes to the laptop, which types it into the job's chat in the Claude app and sends it. When the laptop
-     can't (asleep, off, locked, or a Claude Code chat), one tap copies it and opens the chat in the Claude app here. */
+     can't (asleep, off, locked, or the card has only a session's link), one tap copies it and opens the chat in the
+     Claude app here. */
   function renderReply() {
     const r = S.reply, box = $("b-nstat");
     if (!box) return;
@@ -360,7 +394,7 @@
     S.reply = { card: c.id, text, link, state: "sending", title: "", message: ready.ok ? "Sending it to " + ready.pc : "" };
     if (!isChat(link) || !ready.ok) {
       Object.assign(S.reply, { state: "fallback", title: "Your phone sends this one.",
-        message: !isChat(link) ? "Its chat is a Claude Code session, which the laptop can't type into." : ready.why });
+        message: !isChat(link) ? "This card has its session's link instead of its chat's own link, so the laptop can't find the chat. The morning sweep fixes the link." : ready.why });
       renderReply();
       return;
     }

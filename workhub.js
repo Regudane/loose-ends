@@ -128,7 +128,20 @@
     if (!S.pair) return { ok: false, why: "This phone isn't paired with the laptop yet." };
     const pc = S.pair.computer;
     if (!fastOn() && !laptopOn()) return { ok: false, pc, why: pc + " looks asleep or off." };
+    const v = runnerVersion();
+    if (v && older(v, "1.4.0")) return { ok: false, pc, why: "Phone runner on " + pc + " is still " + v + ", which can't take replies. Run Install Phone runner there to update it." };
     return { ok: true, pc };
+  }
+  /* The Phone runner version the laptop last said it has (live.json or seen.json, whichever is newer). */
+  function runnerVersion() {
+    const a = S.live && S.live.version ? S.live : null, b = S.seen && S.seen.version ? S.seen : null;
+    const d = a && b ? (Date.parse(b.seen_at || "") > Date.parse(a.seen_at || "") ? b : a) : a || b;
+    return d && typeof d.version === "string" ? d.version : "";
+  }
+  function older(v, than) {
+    const x = String(v).split(".").map((n) => parseInt(n, 10) || 0), y = String(than).split(".").map((n) => parseInt(n, 10) || 0);
+    for (let i = 0; i < Math.max(x.length, y.length); i++) { if ((x[i] || 0) !== (y[i] || 0)) return (x[i] || 0) < (y[i] || 0); }
+    return false;
   }
   async function sendReply(card, chat, text, onUpdate) {
     const ready = replyReady();
