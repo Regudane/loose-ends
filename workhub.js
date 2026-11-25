@@ -128,8 +128,12 @@
       const res = await askQuestions(item, btn, pc); // also the yes for a live job
       if (!res) return;
       if (res.answers) { answers = res.answers; said = res.said; }
-    } else if (btn.live) {
-      const ok = await L.ask("Start " + btn.label + " on " + pc + "?", "It writes to " + (btn.liveWhat || "a live system") + ". It opens in its own window on the laptop, the same as pressing it in Work hub.", "Start it");
+    } else if (btn.live || (btn.questions && btn.questions.note)) {
+      // a live job, or one whose questions are all on the laptop (its note says what they are)
+      const what = /^start$/i.test(btn.label) ? item.title : btn.label;
+      const note = btn.questions && btn.questions.note ? btn.questions.note + " " : "";
+      const ok = await L.ask("Start " + what + " on " + pc + "?", (btn.live ? "It writes to " + (btn.liveWhat || "a live system") + ". " : "") + note +
+        "It opens in its own window on the laptop, the same as pressing it in Work hub.", "Start it");
       if (!ok) return;
     }
     const at = L.nowIso();
