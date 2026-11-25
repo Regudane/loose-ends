@@ -8,6 +8,11 @@
   window, the same as Work hub's own button. A live job needs a yes here first. A request the laptop hasn't
   picked up within 10 minutes is missed and never runs later. The outcome comes back in status\<request>.json.
 
+  Fast starts (25 Nov 2026): once Charlie signs Phone runner in to Microsoft on the laptop, it reads requests from
+  OneDrive online every few seconds and writes its answer straight back, so a run starts within seconds instead of
+  waiting for OneDrive's sync. It then writes computers\<laptop>\live.json online every minute, which tells this
+  phone the laptop is on far sooner than seen.json, which comes through the sync.
+
   Ticks go to Work hub's inbox as a note, the way every Claude chat ticks a job. Work hub files them the next
   time it's open on the laptop; until then this phone shows the tick as its own.
 */
@@ -18,13 +23,14 @@
   const RUN = "Apps/Phone runner";
   const FRESH_MIN = 10;
   const ON_MIN = 9;            // seen.json every 2 minutes, and OneDrive can take a few minutes to pass it on
+  const LIVE_MIN = 3;          // live.json every minute, written online by fast starts
   const WHO = { script: "Script", claude: "Claude", you: "You", college: "College" };
   const REPEAT = { weekly: "Weekly", fortnightly: "Fortnightly", daily: "Daily", "as-needed": "As needed", quarterly: "Quarterly", yearly: "Yearly" };
   const STAGE_NAME = { A: "Next block's units", B: "Week before", C: "Teaching weeks", D: "Final week", E: "After the block", H: "Holiday block" };
   const enc = new TextEncoder();
 
   const S = {
-    pair: L.lsGet("hub.pair", null), snap: L.lsGet("hub.snap", null), snapTag: L.lsGet("hub.snapTag", ""), seen: L.lsGet("hub.seen", null),
+    pair: L.lsGet("hub.pair", null), snap: L.lsGet("hub.snap", null), snapTag: L.lsGet("hub.snapTag", ""), seen: L.lsGet("hub.seen", null), live: L.lsGet("hub.live", null),
     computers: null, runs: L.lsGet("hub.runs", []), ticks: L.lsGet("hub.ticks", []), view: L.lsGet("hub.view", "block"),
     open: null, pairing: L.lsGet("hub.pairing", null), loading: false, problem: null, readAt: 0, links: {}, expanded: L.lsGet("hub.expanded", {}),
   };
@@ -59,15 +65,18 @@
       if (!S.pair) { S.computers = await findComputers(); await resumePairing(); }
       const pc = mine();
       if (pc) {
-        const [seen, it] = await Promise.all([
+        const [seen, live, it] = await Promise.all([
           G.readJson(RUN + "/computers/" + pc + "/seen.json").catch(() => null),
+          G.readJson(RUN + "/computers/" + pc + "/live.json").catch(() => null),
           G.item(RUN + "/computers/" + pc + "/snapshot.json"),
         ]);
         S.seen = seen ? seen.data : null;
+        S.live = live ? live.data : null;
+        L.lsSet("hub.live", S.live);
         if (it && it.eTag !== S.snapTag) { S.snap = G.parse(await G.text(it)); S.snapTag = it.eTag; }
         if (!it) { S.snap = null; S.snapTag = ""; }
         L.lsSet("hub.snap", S.snap); L.lsSet("hub.snapTag", S.snapTag); L.lsSet("hub.seen", S.seen);
-      } else { S.snap = null; S.seen = null; }
+      } else { S.snap = null; S.seen = null; S.live = null; }
       S.readAt = Date.now(); S.problem = null;
       pruneTicks();
       await pollRuns();
@@ -123,7 +132,9 @@
       await G.putJson(RUN + "/requests/" + L.stamp(at) + "-" + q.id + ".json", q, { create: true });
       r.state = "waiting";
       const on = laptopOn();
-      L.toast(on ? "Sent. It starts on " + pc + " in a minute or two, and its answer shows here a few minutes later." : "Sent, but " + pc + " looks asleep. It runs only if the laptop picks it up within " + FRESH_MIN + " minutes.");
+      L.toast(!on ? "Sent, but " + pc + " looks asleep. It runs only if the laptop picks it up within " + FRESH_MIN + " minutes."
+        : fastOn() ? "Sent. It starts on " + pc + " in a few seconds."
+        : "Sent. It starts on " + pc + " in a minute or two, and its answer shows here a few minutes later.");
     } catch (e) {
       r.state = "notsent"; r.message = "Not sent. " + L.problemFor(e);
       if (e && e.code === "signin") window.dispatchEvent(new CustomEvent("le:signin"));
@@ -303,14 +314,27 @@
   }
 
   /* ---------- the laptop ---------- */
-  function laptopOn() { const m = S.seen && L.minsAgo(S.seen.seen_at); return m != null && m <= ON_MIN; }
+  /* Fast starts is working on the laptop: live.json, written online every minute, is fresh. */
+  function fastOn() { const m = S.live && L.minsAgo(S.live.seen_at); return m != null && m <= LIVE_MIN; }
+  function laptopOn() {
+    if (fastOn()) return true;
+    const m = S.seen && L.minsAgo(S.seen.seen_at);
+    if (m == null || m > ON_MIN) return false;
+    // with fast starts, live.json knows to the minute when the laptop was last on; seen.json, minutes behind, only counts if newer
+    if (S.live && S.live.seen_at && Date.parse(S.seen.seen_at) <= Date.parse(S.live.seen_at) + 3 * 60000) return false;
+    return true;
+  }
+  function lastSeenAt() {
+    const a = (S.seen && S.seen.seen_at) || "", b = (S.live && S.live.seen_at) || "";
+    return Date.parse(b) > Date.parse(a) || !a ? b : a;
+  }
   function lampHTML() {
     const pc = mine();
     if (!pc) return '<span class="l off"></span>No laptop yet';
     if (S.seen && S.seen.problem) return '<span class="l bad"></span>' + esc(pc) + ": " + esc(S.seen.problem);
-    if (!S.seen) return '<span class="l off"></span>' + esc(pc) + " hasn't said hello yet";
-    return laptopOn() ? '<span class="l on"></span>' + esc(pc) + " is on. Seen " + esc(L.sinceShort(S.seen.seen_at)) + "."
-      : '<span class="l off"></span>' + esc(pc) + " looks asleep or off. Last seen " + esc(L.sinceShort(S.seen.seen_at)) + ".";
+    if (!S.seen && !S.live) return '<span class="l off"></span>' + esc(pc) + " hasn't said hello yet";
+    return laptopOn() ? '<span class="l on"></span>' + esc(pc) + " is on. Seen " + esc(L.sinceShort(lastSeenAt())) + "."
+      : '<span class="l off"></span>' + esc(pc) + " looks asleep or off. Last seen " + esc(L.sinceShort(lastSeenAt())) + ".";
   }
 
   /* ---------- drawing ---------- */
@@ -422,7 +446,8 @@
   function runsView() {
     if (!S.runs.length) return '<div class="h-empty"><b>Nothing run from here yet</b>Jobs you start from this phone show here, with what the laptop said.</div>';
     const waiting = S.runs.some((r) => r.state === "waiting");
-    return (waiting ? '<p class="h-note">The laptop starts a job a minute or two after you press it. Its answer comes back through OneDrive and can take a few more minutes to show here.</p>' : "") + '<ul class="runs">' + S.runs.map((r) => '<li class="run ' + esc(r.state) + '"><span class="l ' + ({ started: "on", waiting: "on pulse", sending: "on pulse", missed: "bad", refused: "bad", notsent: "bad" }[r.state] || "off") + '"></span><div><p class="rt">' + esc(r.title) +
+    return (waiting ? '<p class="h-note">' + (fastOn() ? "The laptop starts a job a few seconds after you press it, and its answer shows here a few seconds later."
+      : "The laptop starts a job a minute or two after you press it. Its answer comes back through OneDrive and can take a few more minutes to show here.") + "</p>" : "") + '<ul class="runs">' + S.runs.map((r) => '<li class="run ' + esc(r.state) + '"><span class="l ' + ({ started: "on", waiting: "on pulse", sending: "on pulse", missed: "bad", refused: "bad", notsent: "bad" }[r.state] || "off") + '"></span><div><p class="rt">' + esc(r.title) +
       (r.label && r.label !== r.title ? ' <span class="rl">' + esc(r.label) + "</span>" : "") + '</p><p class="rs"><b>' + esc(RUN_STATE[r.state] || r.state) + "</b> · " + esc(when(r.at)) + " on " + esc(r.computer) + "</p>" +
       (r.message && r.state !== "started" ? '<p class="rm">' + esc(r.message) + "</p>" : "") + "</div></li>").join("") + "</ul>";
   }
