@@ -3,6 +3,10 @@
   app puts it together (merge.js is the desktop app's own), with Charlie's Done, Snooze, Pin, Whose move and
   notes for Claude saved only to data\changes-phone.json, in the desktop app's format. Never cards.json, and
   never a note in the inbox (those belong to the chats).
+
+  Replies (1.4.0, 25 Nov 2026): on a card with a chat, what Charlie types is his reply in that chat. It goes to the
+  laptop as a signed request (workhub.js sendReply), and Phone runner types it into the chat in the Claude app and
+  sends it. When the laptop can't, one tap copies it and opens the chat in the Claude app on this phone.
 */
 (function () {
   "use strict";
@@ -30,10 +34,20 @@
   const notesOf = (c) => (Array.isArray(c.charlie_notes) ? c.charlie_notes.filter((n) => n && typeof n.text === "string") : []);
   const isNewNote = (c, n) => { const r = parseDate(c.notes_read_at), a = parseDate(n.at); return !r || !a || a > r; };
   /* A chat or a session in the Claude app: only claude.ai links, rebuilt from their own id. */
+  const isChat = (link) => /^https:\/\/claude\.ai\/chat\//.test(String(link || ""));
+  /* Replies sent from this phone (1.4.0), kept here only so the card shows them: {card: [{at, text, how}]} */
+  const repliesOf = (id) => ((L.lsGet("board.replies", {}) || {})[id] || []);
+  function addReply(id, text, how) {
+    const all = L.lsGet("board.replies", {}) || {}, cut = Date.now() - 30 * 86400000;
+    Object.keys(all).forEach((k) => { all[k] = (all[k] || []).filter((x) => Date.parse(x.at) > cut); if (!all[k].length) delete all[k]; });
+    all[id] = (all[id] || []).concat([{ at: nowIso(), text, how }]).slice(-6);
+    L.lsSet("board.replies", all);
+  }
+  function copyText(text) { try { const p = navigator.clipboard && navigator.clipboard.writeText(text); if (p && p.catch) p.catch(() => {}); } catch (e) {} }
   const chatLink = (url) => { const m = /^https:\/\/claude\.ai\/(chat\/[0-9a-f-]{36}|code\/session_[A-Za-z0-9_-]{8,80})\/?$/i.exec(String(url || "").trim()); return m ? "https://claude.ai/" + m[1] : null; };
 
   const S = { base: null, changes: {}, phoneServer: { edits: {}, added: {} }, pending: [], notes: [], cards: [], meta: {},
-    view: L.lsGet("board.view", "all"), q: "", open: null, readAt: null, cachedAt: null, problem: null, loading: false, snz: false };
+    view: L.lsGet("board.view", "all"), q: "", open: null, readAt: null, cachedAt: null, problem: null, loading: false, snz: false, reply: null };
 
   function matches(c) {
     if (!S.q) return true;
@@ -284,8 +298,21 @@
     if (c.status !== "done") h += '<h3>Whose move</h3><div class="moves" role="group" aria-label="Whose move">' + MOVE_KEYS.map((m) => '<button type="button" class="mv s-' + m + '" data-move="' + m + '" aria-pressed="' + (m === k) + '">' + esc(MOVES[m]) + "</button>").join("") + "</div>";
     $("b-s-top").innerHTML = h;
 
+    // 1.4.0: with a chat to reply to, what's typed here is a reply in that chat, not a note on the card
+    const rlink = chatLink(c.chat_url) || (jobChats(c)[0] || {}).link;
+    $("b-nhead").textContent = rlink ? "Reply to its chat" : "Your notes for Claude";
+    $("b-nlabel").textContent = rlink ? "Your reply to this job's chat" : "Note for Claude";
+    $("b-ntext").placeholder = rlink ? "Your reply, as if you typed it in the chat" : "Tell Claude something about this job";
+    $("b-nhint").textContent = !rlink ? "The next chat on this job reads it. Notes stay on the card."
+      : isChat(rlink) ? "Your laptop types it into the chat and sends it, and Claude carries on."
+      : "It's copied, and the chat opens in the Claude app for you to paste it and send.";
+    $("b-nsave").textContent = rlink ? "Send to the chat" : "Save note";
+    $("b-s-replies").innerHTML = repliesOf(c.id).slice().reverse().map((x) => '<li class="sent"><div class="nmeta"><span>' + esc(when(x.at) || "") + '</span><span class="st">' +
+      (x.how === "laptop" ? "Sent to the chat by the laptop" : "Copied to send from your phone") + "</span></div><p>" + esc(x.text) + "</p></li>").join("");
     const ns = notesOf(c).slice().reverse();
+    $("b-s-nhead").hidden = !(rlink && ns.length);
     $("b-s-notes").innerHTML = ns.map((n) => { const f = isNewNote(c, n); return '<li class="' + (f ? "fresh" : "") + '"><div class="nmeta"><span>' + esc(when(n.at) || "No date") + '</span><span class="st">' + (f ? "New: the next chat on this job reads it" : "Read by Claude") + "</span></div><p>" + esc(n.text) + "</p></li>"; }).join("");
+    renderReply();
 
     let r = "";
     if (c.context && c.context.length) r += "<h3>Details</h3><ul>" + c.context.map((x) => "<li>" + esc(x) + "</li>").join("") + "</ul>";
@@ -307,6 +334,55 @@
     S.open = id; S.snz = false; $("b-ntext").value = ""; $("b-nsave").disabled = true;
     renderSheet(); $("b-sbody").scrollTop = 0; document.body.classList.add("locked"); L.toastUp(true);
     const t = document.querySelector("#b-sheet .close"); if (t) t.focus({ preventScroll: true });
+  }
+  /* ---------- replies (1.4.0, 25 Nov 2026) ---------- */
+  /* A reply goes to the laptop, which types it into the job's chat in the Claude app and sends it. When the laptop
+     can't (asleep, off, locked, or a Claude Code chat), one tap copies it and opens the chat in the Claude app here. */
+  function renderReply() {
+    const r = S.reply, box = $("b-nstat");
+    if (!box) return;
+    if (!r || r.card !== S.open) { box.innerHTML = ""; return; }
+    if (r.state === "sending") { box.innerHTML = '<div class="nstat"><span class="spin" aria-hidden="true"></span><span>' + esc(r.message || "Sending it to the laptop") + "</span></div>"; return; }
+    box.innerHTML = '<div class="nfall"><p><b>' + esc(r.title) + "</b> " + esc(r.message || "") + "</p><p>Copy it, and the chat opens in the Claude app: paste it there and tap Send.</p>" +
+      '<div class="row"><a class="btn ink" data-rcopy href="' + esc(r.link) + '" target="_blank" rel="noopener">' + icon("open") + 'Copy and open the chat</a><button type="button" class="btn" data-rdrop>Not now</button></div></div>';
+  }
+  function settleCopied() {
+    const r = S.reply;
+    if (!r) return;
+    addReply(r.card, r.text, "phone");
+    S.reply = null;
+    if (S.open === r.card) { if ($("b-ntext").value.trim() === r.text) { $("b-ntext").value = ""; $("b-nsave").disabled = true; } renderSheet(); }
+  }
+  async function reply(c, link, text) {
+    if (S.reply && S.reply.state === "sending") { L.toast("Still sending your last reply."); return; }
+    const hub = window.LEHub;
+    const ready = hub && hub.replyReady ? hub.replyReady() : { ok: false, why: "" };
+    S.reply = { card: c.id, text, link, state: "sending", title: "", message: ready.ok ? "Sending it to " + ready.pc : "" };
+    if (!isChat(link) || !ready.ok) {
+      Object.assign(S.reply, { state: "fallback", title: "Your phone sends this one.",
+        message: !isChat(link) ? "Its chat is a Claude Code session, which the laptop can't type into." : ready.why });
+      renderReply();
+      return;
+    }
+    $("b-ntext").value = ""; $("b-nsave").disabled = true;
+    renderReply();
+    const res = await hub.sendReply(c.id, link, text, (d) => { if (S.reply && S.reply.text === text) { S.reply.message = d.message || S.reply.message; renderReply(); } });
+    if (!S.reply || S.reply.text !== text) return; // put aside meanwhile
+    if (res.state === "sent") {
+      addReply(c.id, text, "laptop");
+      S.reply = null;
+      L.toast(res.message || "Sent to the chat.");
+      if (S.open === c.id) renderSheet();
+      return;
+    }
+    Object.assign(S.reply, { state: "fallback", title: res.state === "unsure" ? "Not sure it went." : "The laptop didn't send it.", message: res.message || "" });
+    if (S.open === c.id) {
+      if (!$("b-ntext").value) { $("b-ntext").value = text; $("b-nsave").disabled = false; }
+      renderReply();
+    } else {
+      const r = S.reply;
+      L.toast(r.title + " Copy it and open the chat?", () => { copyText(r.text); window.open(r.link, "_blank", "noopener"); settleCopied(); }, true, "Copy and open");
+    }
   }
   function closeSheet() { S.open = null; S.snz = false; $("b-sheet").hidden = true; document.body.classList.remove("locked"); L.toastUp(false); }
   function render() { renderTop(); renderRail(); renderList(); if (S.open) renderSheet(); }
@@ -333,6 +409,8 @@
       else if (k === "snooze") { S.snz = !S.snz; renderSheet(); }
       return;
     }
+    if (t.closest("[data-rcopy]")) { const r = S.reply; if (r) copyText(r.text); setTimeout(settleCopied, 400); return; } // the link opens the chat
+    if (t.closest("[data-rdrop]")) { S.reply = null; renderReply(); return; }
     if (t.closest("[data-bcopy]")) { try { navigator.clipboard.writeText(c.where).then(() => L.toast("Copied"), () => L.toast("Couldn't copy that.")); } catch (e) { L.toast("Couldn't copy that."); } return; }
     if (S.snz && !t.closest(".snz")) { S.snz = false; renderSheet(); }
   }
@@ -346,6 +424,8 @@
       ev.preventDefault();
       const c = S.open && cardById(S.open), text = $("b-ntext").value.trim();
       if (!c || !text) return;
+      const link = chatLink(c.chat_url) || (jobChats(c)[0] || {}).link;
+      if (link) { reply(c, link, text); return; }
       const at = nowIso(), note = { id: noteId(at), at, text, from: "phone" };
       $("b-ntext").value = ""; $("b-nsave").disabled = true;
       savePhone((ch) => M.addNote(ch, c.id, note, at)).then((ok) => {

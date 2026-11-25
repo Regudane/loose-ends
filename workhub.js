@@ -24,6 +24,7 @@
   const FRESH_MIN = 10;
   const ON_MIN = 9;            // seen.json every 2 minutes, and OneDrive can take a few minutes to pass it on
   const LIVE_MIN = 3;          // live.json every minute, written online by fast starts
+  const REPLY_POLL_MS = window.LE_TEST_REPLY_POLL_MS || 2500;
   const WHO = { script: "Script", claude: "Claude", you: "You", college: "College" };
   const REPEAT = { weekly: "Weekly", fortnightly: "Fortnightly", daily: "Daily", "as-needed": "As needed", quarterly: "Quarterly", yearly: "Yearly" };
   const STAGE_NAME = { A: "Next block's units", B: "Week before", C: "Teaching weeks", D: "Final week", E: "After the block", H: "Holiday block" };
@@ -42,6 +43,8 @@
   /* ---------- signing, the same text Phone runner checks (core.js signedText) ---------- */
   const b64url = (buf) => { const b = new Uint8Array(buf); let s = ""; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
   const signedText = (q) => {
+    // a reply for a Loose Ends job's chat (1.4.0): the card, the chat and every word of it are signed
+    if (q.kind === "reply") return JSON.stringify(["phone-reply/v1", q.id, q.at, q.phone, q.computer, q.card, q.chat, q.text]);
     const base = [q.id, q.at, q.phone, q.computer, q.where, q.item, q.index, q.block, q.expect, !!q.confirmed];
     // v2 (25 Nov 2026): the answers to the job's questions are signed too
     if (Array.isArray(q.answers)) return JSON.stringify(["phone-run/v2"].concat(base, [q.answers.map(String)]));
@@ -115,6 +118,42 @@
       if (S.runs.some((r) => r.state === "waiting")) { await pollRuns().catch(() => {}); render(); }
       if (Date.now() - S.readAt > 60000) await load(); else schedule();
     }, busy ? 5000 : 30000);
+  }
+
+  /* ---------- replies for a Loose Ends job's chat (1.4.0, 25 Nov 2026) ---------- */
+  /* A reply Charlie types on a card goes to the laptop as a signed request, and Phone runner types it into that job's
+     chat in the Claude app there and sends it. The laptop takes it within 90 seconds or not at all, so a reply
+     never turns up late after he's sent it from here himself. */
+  function replyReady() {
+    if (!S.pair) return { ok: false, why: "This phone isn't paired with the laptop yet." };
+    const pc = S.pair.computer;
+    if (!fastOn() && !laptopOn()) return { ok: false, pc, why: pc + " looks asleep or off." };
+    return { ok: true, pc };
+  }
+  async function sendReply(card, chat, text, onUpdate) {
+    const ready = replyReady();
+    if (!ready.ok) return { state: "notsent", message: ready.why };
+    const key = await L.idbGet("phone-key").catch(() => null);
+    if (!key || key.id !== S.pair.phone) return { state: "notsent", message: "This phone's pairing key is gone, so the laptop won't trust it. Pair again from More." };
+    const at = L.nowIso();
+    const q = { v: 1, kind: "reply", id: "y" + Date.now().toString(36) + "-" + L.rand(8), at, phone: S.pair.phone, computer: ready.pc, card, chat, text };
+    q.sig = await sign(key, signedText(q));
+    try { await G.putJson(RUN + "/requests/" + L.stamp(at) + "-" + q.id + ".json", q, { create: true }); }
+    catch (e) {
+      if (e && e.code === "signin") window.dispatchEvent(new CustomEvent("le:signin"));
+      return { state: "notsent", message: "It didn't reach OneDrive. " + L.problemFor(e) };
+    }
+    const start = Date.now();
+    let typing = 0;
+    for (;;) {
+      await new Promise((r) => setTimeout(r, REPLY_POLL_MS));
+      const st = await G.readJson(RUN + "/status/" + q.id + ".json").catch(() => null);
+      const d = st && st.data;
+      if (d && d.state && d.state !== "sending") return d;
+      if (d && d.state === "sending" && !typing) { typing = Date.now(); if (onUpdate) onUpdate(d); }
+      if (!typing && Date.now() - start > 100000) return { state: "notsent", message: ready.pc + " didn't pick it up in time, so it won't type it now." };
+      if (typing && Date.now() - typing > 75000) return { state: "unsure", message: ready.pc + " started typing it but hasn't said how it went. Check the chat before you send it again." };
+    }
   }
 
   async function run(where, item, btn) {
@@ -736,5 +775,5 @@
   function escape() { if (!S.open) return false; closePanel(); return true; }
   function info() { return { pair: S.pair, computer: mine() }; }
 
-  window.LEHub = { init, load, shown, render, escape, unpair, info, _state: S, _signedText: signedText, _pairCode: pairCode };
+  window.LEHub = { init, load, shown, render, escape, unpair, info, replyReady, sendReply, _state: S, _signedText: signedText, _pairCode: pairCode };
 })();

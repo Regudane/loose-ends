@@ -52,7 +52,7 @@
   <div class="gate-in">
     <div class="gate-tag" aria-hidden="true"><span class="eye"></span><svg class="twine"><use href="#twine"/></svg><b>Loose Ends</b><i>and Work hub</i></div>
     <h1>Your loose ends, in your pocket.</h1>
-    <p class="gate-sub">The board from your laptop, your notes for Claude, and Work hub's jobs, which start on your laptop when you press them here.</p>
+    <p class="gate-sub">The board from your laptop, your replies to its chats, and Work hub's jobs, which start on your laptop when you press them here.</p>
     <button class="gate-btn" id="signin" type="button">Sign in with Microsoft</button>
     <p class="gate-msg" id="gate-msg" role="status"></p>
     <p class="gate-fine">Uses your VES Microsoft account. It only reads and writes your Loose Ends and Phone runner folders in OneDrive, and drops ticks in Work hub's inbox.</p>
@@ -83,12 +83,15 @@
     <button class="close" type="button" data-bclose aria-label="Close"><svg><use href="#i-x"/></svg></button>
     <div class="sbody" id="b-sbody">
       <div id="b-s-top"></div>
-      <h3>Your notes for Claude</h3>
+      <h3 id="b-nhead">Your notes for Claude</h3>
       <form class="nform" id="b-nform">
-        <label class="sr" for="b-ntext">Note for Claude</label>
+        <label class="sr" for="b-ntext" id="b-nlabel">Note for Claude</label>
         <textarea id="b-ntext" rows="3" placeholder="Tell Claude something about this job"></textarea>
-        <div class="nrow"><span class="muted">The next chat on this job reads it. Notes stay on the card.</span><button class="btn ink" id="b-nsave" type="submit" disabled>Save note</button></div>
+        <div class="nrow"><span class="muted" id="b-nhint">The next chat on this job reads it. Notes stay on the card.</span><button class="btn ink" id="b-nsave" type="submit" disabled>Save note</button></div>
       </form>
+      <div id="b-nstat" aria-live="polite"></div>
+      <ol class="nlist" id="b-s-replies"></ol>
+      <h4 class="nold" id="b-s-nhead" hidden>Earlier notes for Claude</h4>
       <ol class="nlist" id="b-s-notes"></ol>
       <div id="b-s-rest"></div>
     </div>
