@@ -41,7 +41,12 @@
 
   /* ---------- signing, the same text Phone runner checks (core.js signedText) ---------- */
   const b64url = (buf) => { const b = new Uint8Array(buf); let s = ""; for (let i = 0; i < b.length; i++) s += String.fromCharCode(b[i]); return btoa(s).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""); };
-  const signedText = (q) => JSON.stringify(["phone-run/v1", q.id, q.at, q.phone, q.computer, q.where, q.item, q.index, q.block, q.expect, !!q.confirmed]);
+  const signedText = (q) => {
+    const base = [q.id, q.at, q.phone, q.computer, q.where, q.item, q.index, q.block, q.expect, !!q.confirmed];
+    // v2 (25 Nov 2026): the answers to the job's questions are signed too
+    if (Array.isArray(q.answers)) return JSON.stringify(["phone-run/v2"].concat(base, [q.answers.map(String)]));
+    return JSON.stringify(["phone-run/v1"].concat(base));
+  };
   async function pairCode(pub) {
     const h = new Uint8Array(await crypto.subtle.digest("SHA-256", enc.encode("phone-pair/v1|" + pub.x + "|" + pub.y)));
     const n = h[0] * 16777216 + h[1] * 65536 + h[2] * 256 + h[3];
@@ -118,15 +123,21 @@
     const key = await L.idbGet("phone-key").catch(() => null);
     if (!key || key.id !== S.pair.phone) { L.toast("This phone's pairing key is gone, so the laptop won't trust it. Pair again from More.", null, true); return; }
     const pc = S.pair.computer;
-    if (btn.live) {
+    let answers = null, said = [];
+    if (btn.questions && Array.isArray(btn.questions.ask) && btn.questions.ask.length) {
+      const res = await askQuestions(item, btn, pc); // also the yes for a live job
+      if (!res) return;
+      if (res.answers) { answers = res.answers; said = res.said; }
+    } else if (btn.live) {
       const ok = await L.ask("Start " + btn.label + " on " + pc + "?", "It writes to " + (btn.liveWhat || "a live system") + ". It opens in its own window on the laptop, the same as pressing it in Work hub.", "Start it");
       if (!ok) return;
     }
     const at = L.nowIso();
     const q = { v: 1, id: "r" + Date.now().toString(36) + "-" + L.rand(8), at, phone: S.pair.phone, computer: pc, where, item: item.id, index: btn.index,
       block: S.snap.block.name, expect: btn.describe, confirmed: !!btn.live, label: btn.label, title: item.title };
+    if (answers) q.answers = answers;
     q.sig = await sign(key, signedText(q));
-    const r = { id: q.id, at, title: item.title, label: btn.label, computer: pc, state: "sending", live: !!btn.live, where, item: item.id, index: btn.index };
+    const r = { id: q.id, at, title: item.title, label: btn.label, computer: pc, state: "sending", live: !!btn.live, where, item: item.id, index: btn.index, said };
     S.runs.unshift(r); saveRuns(); render();
     try {
       await G.putJson(RUN + "/requests/" + L.stamp(at) + "-" + q.id + ".json", q, { create: true });
@@ -140,6 +151,110 @@
       if (e && e.code === "signin") window.dispatchEvent(new CustomEvent("le:signin"));
     }
     saveRuns(); render(); schedule();
+  }
+
+  /* ---------- a job's questions, answered here before it starts (25 Nov 2026) ----------
+     btn.questions = { ask: [{ id, text, choices: [{ value, label, hint?, then?: [...] }] } or { id, text, pattern, placeholder? }],
+     preset?: [answers in the order asked] }, from Phone runner's questions.json. The laptop checks the answers against
+     its own copy and types them into the job's window. Resolves { answers, said }, { answers: null } (answer on the
+     laptop) or null (cancelled). */
+  function askQuestions(item, btn, pc) {
+    const Q = btn.questions;
+    const sel = {};
+    // presets fill the tree in the order it's asked
+    (function fill(qs, base, list) {
+      qs.forEach((qn, k) => {
+        if (!list.length) return;
+        const key = base + "/" + k, v = String(list.shift());
+        sel[key] = v;
+        const c = !qn.multi && (qn.choices || []).find((x) => String(x.value) === v);
+        if (c && c.then) fill(c.then, key + "=" + v, list);
+      });
+    })(Q.ask, "", (Q.preset || []).slice());
+    const draw = (qs, base) => qs.map((qn, k) => {
+      const key = base + "/" + k;
+      let h = '<div class="qs-q"><h3>' + esc(qn.text || qn.id) + "</h3>";
+      if (qn.empty) h += '<p class="qs-empty">' + esc(qn.empty) + "</p>";
+      if (Array.isArray(qn.choices)) {
+        const have = qn.multi ? String(sel[key] || "").split(",").filter(Boolean) : [];
+        h += '<div class="qs-ch' + (qn.multi ? " multi" : "") + '" role="group" aria-label="' + esc(qn.text || qn.id) + '">' + qn.choices.map((c) => {
+          const v = String(c.value);
+          const on = qn.multi ? have.includes(v) : sel[key] === v;
+          const badge = qn.multi ? (on ? "\u2713" : "") : (v.length <= 3 ? v : "\u2022");
+          return '<button type="button" data-qpick="' + esc(key) + '" data-qv="' + esc(v) + '"' + (qn.multi ? ' data-qmulti="1"' : "") + (c.exclusive ? ' data-qx="1"' : "") +
+            ' aria-pressed="' + on + '"' + (c.exclusive ? ' class="x"' : "") + "><b>" + esc(badge) + "</b><span>" +
+            esc(c.label || v) + (c.hint ? "<small>" + esc(c.hint) + "</small>" : "") + "</span></button>";
+        }).join("") + "</div>";
+        const c = !qn.multi && qn.choices.find((x) => sel[key] === String(x.value));
+        if (c && c.then && c.then.length) h += '<div class="qs-then">' + draw(c.then, key + "=" + String(c.value)) + "</div>";
+      } else {
+        h += '<input class="qs-in" data-qtext="' + esc(key) + '" value="' + esc(sel[key] || "") + '" placeholder="' + esc(qn.placeholder || "") + '" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="' + (Number(qn.max) || 60) + '">';
+      }
+      return h + "</div>";
+    }).join("");
+    const collect = () => {
+      const answers = [], said = [];
+      let missing = null;
+      (function walk(qs, base) {
+        qs.forEach((qn, k) => {
+          if (missing) return;
+          const key = base + "/" + k, v = sel[key];
+          if (v == null || v === "") { missing = "Answer \u201c" + (qn.text || qn.id) + "\u201d first."; return; }
+          if (Array.isArray(qn.choices) && qn.multi) {
+            const vals = String(v).split(",").filter(Boolean);
+            const cs = vals.map((x) => qn.choices.find((c) => String(c.value) === x)).filter(Boolean);
+            if (!cs.length) { missing = "Pick at least one for \u201c" + (qn.text || qn.id) + "\u201d."; return; }
+            answers.push(cs.map((c) => String(c.value)).join(",")); said.push(cs.map((c) => c.label || String(c.value)).join(" + "));
+          } else if (Array.isArray(qn.choices)) {
+            const c = qn.choices.find((x) => String(x.value) === v);
+            if (!c) { missing = "Answer \u201c" + (qn.text || qn.id) + "\u201d first."; return; }
+            answers.push(v); said.push(c.label || v);
+            if (c.then) walk(c.then, key + "=" + v);
+          } else {
+            if (!new RegExp("^(?:" + qn.pattern + ")$").test(v)) { missing = "\u201c" + v + "\u201d doesn't look right for \u201c" + (qn.text || qn.id) + "\u201d."; return; }
+            answers.push(v); said.push(v);
+          }
+        });
+      })(Q.ask, "");
+      return { answers, said, missing };
+    };
+    return new Promise((resolve) => {
+      const w = $("qs"), body = $("qs-body"), err = $("qs-err");
+      $("qs-t").textContent = (item.title || btn.label) + (btn.label && btn.label !== item.title && !/^start$/i.test(btn.label) ? " \u00b7 " + btn.label : "") + " on " + pc;
+      $("qs-d").textContent = (btn.live ? "It writes to " + (btn.liveWhat || "a live system") + ". " : "") +
+        "It asks these when it starts. Answer them here, and the laptop gives the job your answers so it runs straight through." + (Q.note ? " " + Q.note : "");
+      const paint = () => { body.innerHTML = draw(Q.ask, ""); };
+      paint();
+      err.hidden = true;
+      w.hidden = false;
+      const done = (v) => { w.hidden = true; w.onclick = null; w.oninput = null; resolve(v); };
+      w.oninput = (e) => { const k = e.target.getAttribute && e.target.getAttribute("data-qtext"); if (k) sel[k] = e.target.value.trim(); };
+      w.onclick = (e) => {
+        const t = e.target;
+        const pk = t.closest && t.closest("[data-qpick]");
+        if (pk) {
+          const key = pk.getAttribute("data-qpick"), v = pk.getAttribute("data-qv");
+          if (pk.hasAttribute("data-qmulti")) {
+            // pick any: an "on its own" choice (Pick on the laptop) clears the rest, and the rest clear it
+            const xs = Array.from(pk.parentNode.querySelectorAll("[data-qx]")).map((b) => b.getAttribute("data-qv"));
+            let have = String(sel[key] || "").split(",").filter(Boolean);
+            if (pk.hasAttribute("data-qx")) have = have.includes(v) ? [] : [v];
+            else { have = have.filter((x) => !xs.includes(x)); have = have.includes(v) ? have.filter((x) => x !== v) : have.concat([v]); }
+            sel[key] = have.join(",");
+          } else if (sel[key] !== v) { Object.keys(sel).forEach((k) => { if (k.startsWith(key + "=")) delete sel[k]; }); sel[key] = v; }
+          err.hidden = true; paint();
+          return;
+        }
+        if (t.id === "qs-no" || t.hasAttribute("data-qclose")) return done(null);
+        if (t.id === "qs-laptop") return done({ answers: null });
+        if (t.id === "qs-yes") {
+          const c = collect();
+          if (c.missing) { err.textContent = c.missing; err.hidden = false; return; }
+          return done({ answers: c.answers, said: c.said });
+        }
+      };
+      setTimeout(() => { const f = body.querySelector("[aria-pressed=true]") || body.querySelector("button,input"); if (f) f.focus(); }, 30);
+    });
   }
 
   /* ---------- pairing ---------- */
@@ -449,6 +564,7 @@
     return (waiting ? '<p class="h-note">' + (fastOn() ? "The laptop starts a job a few seconds after you press it, and its answer shows here a few seconds later."
       : "The laptop starts a job a minute or two after you press it. Its answer comes back through OneDrive and can take a few more minutes to show here.") + "</p>" : "") + '<ul class="runs">' + S.runs.map((r) => '<li class="run ' + esc(r.state) + '"><span class="l ' + ({ started: "on", waiting: "on pulse", sending: "on pulse", missed: "bad", refused: "bad", notsent: "bad" }[r.state] || "off") + '"></span><div><p class="rt">' + esc(r.title) +
       (r.label && r.label !== r.title ? ' <span class="rl">' + esc(r.label) + "</span>" : "") + '</p><p class="rs"><b>' + esc(RUN_STATE[r.state] || r.state) + "</b> · " + esc(when(r.at)) + " on " + esc(r.computer) + "</p>" +
+      (r.said && r.said.length ? '<p class="rm">Your answers: ' + esc(r.said.join(", ")) + "</p>" : "") +
       (r.message && r.state !== "started" ? '<p class="rm">' + esc(r.message) + "</p>" : "") + "</div></li>").join("") + "</ul>";
   }
   function renderMain() {

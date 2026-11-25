@@ -3,7 +3,7 @@
   "use strict";
   const L = window.LE, A = window.LEAuth;
   const { $, esc } = L;
-  const VERSION = "1.1.0";
+  const VERSION = "1.2.0";
   const THEME = { board: "#18211c", hub: "#0c131d" };
   let tab = L.lsGet("tab", "board");
   let started = false;
@@ -88,6 +88,7 @@
   document.addEventListener("keydown", (ev) => {
     if (ev.key !== "Escape") return;
     if (!$("ask").hidden) { $("ask-no").click(); return; }
+    if (!$("qs").hidden) { $("qs-no").click(); return; }
     if (!$("more").hidden) { $("more").hidden = true; return; }
     if (tab === "board") window.LEBoard.escape(); else window.LEHub.escape();
   });
