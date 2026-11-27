@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://*.sharepoint.com https://fonts.googleapis.com https://fonts.gstatic.com; base-uri 'none'; form-action 'none'; object-src 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://login.microsoftonline.com https://graph.microsoft.com https://*.sharepoint.com https://api.anthropic.com https://fonts.googleapis.com https://fonts.gstatic.com; base-uri 'none'; form-action 'none'; object-src 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="theme-color" content="#18211c">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -16,8 +16,9 @@
 <link rel="apple-touch-icon" href="icons/icon-180.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Caveat:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..900&family=Caveat:wght@500;600&family=Newsreader:ital,opsz,wght@0,6..72,400..600;1,6..72,400..500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="atlas.css">
 </head>
 <body class="tab-board">
 <svg width="0" height="0" class="defs" aria-hidden="true" focusable="false">
@@ -44,6 +45,9 @@
     <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.6 0l3-3a4 4 0 0 0-5.6-5.6l-1 1M14 10a4 4 0 0 0-5.6 0l-3 3a4 4 0 0 0 5.6 5.6l1-1" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
     <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3c.7 4.6 2.4 6.3 7 7-4.6.7-6.3 2.4-7 7-.7-4.6-2.4-6.3-7-7 4.6-.7 6.3-2.4 7-7z" fill="currentColor"/></symbol>
     <symbol id="i-chev" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-atlas" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="1.9"/><path d="M12 7c.4 2.6 1.4 3.6 4 4-2.6.4-3.6 1.4-4 4-.4-2.6-1.4-3.6-4-4 2.6-.4 3.6-1.4 4-4z" fill="currentColor"/></symbol>
+    <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.8v2.6M12 18.6v2.6M21.2 12h-2.6M5.4 12H2.8M18.5 5.5l-1.8 1.8M7.3 16.7l-1.8 1.8M18.5 18.5l-1.8-1.8M7.3 7.3 5.5 5.5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M4 12 20 4l-5 16-3.5-6.5z" fill="currentColor"/></symbol>
   </defs>
 </svg>
 
@@ -122,6 +126,45 @@
   </section>
 </div>
 
+<!-- Atlas (1.5.0, 27 Nov 2026): Charlie's voice assistant, the Observatory look -->
+<div class="view v-atlas" id="v-atlas" hidden>
+  <div class="a-sky" aria-hidden="true"></div>
+  <header class="a-top">
+    <div class="a-row"><p class="a-kicker"><svg aria-hidden="true"><use href="#i-atlas"/></svg>Atlas</p><button class="a-icon" id="a-gear" type="button" aria-label="Atlas settings"><svg><use href="#i-gear"/></svg></button></div>
+    <h1 class="a-title">What can I do for you?</h1>
+  </header>
+  <main class="a-main">
+    <section class="a-keygate" id="a-keygate" hidden>
+      <h2>One thing first</h2>
+      <p>Atlas thinks with Claude, using your own Claude API key, the same one your laptop uses. Paste it here once. It stays on this phone and goes only to Anthropic.</p>
+      <label class="sr" for="a-key">Your Claude API key</label>
+      <input id="a-key" type="password" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" placeholder="sk-ant-...">
+      <button type="button" class="a-btn gold" id="a-key-save">Save it</button>
+      <p class="a-keymsg" id="a-key-msg" role="status"></p>
+      <p class="a-fine">It's in your "API Keys for coding purposes" spreadsheet in OneDrive (the Python scripts folder), or in the Claude Console under API keys.</p>
+    </section>
+    <section class="a-hello" id="a-hello" hidden>
+      <p class="a-hello-t">Ask about your loose ends and this block's jobs. Tap the ring and talk, or type.</p>
+      <ul class="a-tries"><li>“What's waiting on me?”</li><li>“What's due today?”</li><li>“Tell the marking chat to upload the eighteen that passed.”</li><li>“Tick the WHS forms for today.”</li></ul>
+    </section>
+    <div class="a-log" id="a-log" aria-live="polite"></div>
+  </main>
+  <div class="a-dock" id="a-dock" hidden>
+    <button class="a-ring" id="a-ring" type="button" data-mode="idle" aria-label="Talk to Atlas"><span class="a-r1"></span><span class="a-r2"></span><span class="a-core"></span></button>
+    <form class="a-form" id="a-form"><label class="sr" for="a-text">Type to Atlas</label><textarea id="a-text" rows="1" placeholder="Type to Atlas" enterkeyhint="send"></textarea><button type="submit" class="a-send" id="a-send" aria-label="Send" disabled><svg aria-hidden="true"><use href="#i-send"/></svg></button></form>
+    <p class="a-state" id="a-state" role="status"></p>
+  </div>
+</div>
+
+<div class="a-set-wrap" id="a-set" hidden>
+  <div class="scrim" data-aclose></div>
+  <section class="a-sheet" role="dialog" aria-modal="true" aria-labelledby="a-set-t">
+    <button class="a-x" type="button" data-aclose aria-label="Close"><svg><use href="#i-x"/></svg></button>
+    <h2 id="a-set-t">Atlas</h2>
+    <div id="a-set-body"></div>
+  </section>
+</div>
+
 <div class="ask-wrap" id="ask" hidden>
   <div class="scrim"></div>
   <section class="ask" role="alertdialog" aria-modal="true" aria-labelledby="ask-t" aria-describedby="ask-d">
@@ -157,6 +200,7 @@
 <nav class="tabs" id="tabs" aria-label="Sections" hidden>
   <button type="button" data-tab="board" aria-current="page"><svg aria-hidden="true"><use href="#i-tag"/></svg><span>Loose Ends</span><i class="dot" id="t-board-n" hidden></i></button>
   <button type="button" data-tab="hub"><svg aria-hidden="true"><use href="#i-lever"/></svg><span>Work hub</span><i class="dot" id="t-hub-n" hidden></i></button>
+  <button type="button" data-tab="atlas"><svg aria-hidden="true"><use href="#i-atlas"/></svg><span>Atlas</span></button>
   <button type="button" data-more><svg aria-hidden="true"><use href="#i-more"/></svg><span>More</span></button>
 </nav>
 <div class="toast" id="toast" role="status" hidden></div>
@@ -168,6 +212,7 @@
 <script src="common.js"></script>
 <script src="board.js"></script>
 <script src="workhub.js"></script>
+<script src="atlas.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

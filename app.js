@@ -1,17 +1,19 @@
-/* The app around the two tabs: sign-in, the tab bar, More, and keeping itself up to date. */
+/* The app around its tabs (Loose Ends, Work hub and, from 1.5.0, Atlas): sign-in, the tab bar, More, and keeping
+   itself up to date. */
 (function () {
   "use strict";
   const L = window.LE, A = window.LEAuth;
   const { $, esc } = L;
-  const VERSION = "1.4.1";
-  const THEME = { board: "#18211c", hub: "#0c131d" };
+  const VERSION = "1.5.0";
+  const THEME = { board: "#18211c", hub: "#0c131d", atlas: "#0b1222" };
+  const TABS = ["board", "hub", "atlas"];
   let tab = L.lsGet("tab", "board");
   let started = false;
 
   function showGate(msg) {
     $("gate").hidden = false;
     $("tabs").hidden = true;
-    $("v-board").hidden = true; $("v-hub").hidden = true;
+    $("v-board").hidden = true; $("v-hub").hidden = true; $("v-atlas").hidden = true;
     const ready = A.configured();
     $("signin").disabled = !ready;
     $("gate-msg").textContent = !ready ? "Almost ready. The app still needs its Microsoft registration, which Claude does with you at the laptop." : msg || "";
@@ -20,25 +22,30 @@
   }
   function setTheme(c) { const m = document.querySelector('meta[name="theme-color"]'); if (m) m.setAttribute("content", c); }
   function show(t) {
-    tab = t === "hub" ? "hub" : "board";
+    const was = tab;
+    tab = TABS.includes(t) ? t : "board";
     L.lsSet("tab", tab);
+    if (was === "atlas" && tab !== "atlas") window.LEAtlas.hidden();
     $("gate").hidden = true;
     $("tabs").hidden = false;
     $("v-board").hidden = tab !== "board";
     $("v-hub").hidden = tab !== "hub";
+    $("v-atlas").hidden = tab !== "atlas";
     if (document.body.className !== "tab-" + tab) $("toast").hidden = true; // a message from the other tab doesn't belong here
     document.body.className = "tab-" + tab;
     setTheme(THEME[tab]);
     document.querySelectorAll("#tabs [data-tab]").forEach((b) => b.setAttribute("aria-current", b.getAttribute("data-tab") === tab ? "page" : "false"));
     window.scrollTo({ top: 0 });
     if (tab === "board") { window.LEBoard.render(); if (window.LEBoard.stale()) window.LEBoard.load(); }
-    else window.LEHub.shown();
+    else if (tab === "hub") window.LEHub.shown();
+    else window.LEAtlas.shown();
   }
   function start() {
     if (started) { show(tab); return; }
     started = true;
     window.LEBoard.init();
     window.LEHub.init();
+    window.LEAtlas.init();
     show(tab);
     if (tab !== "board") window.LEBoard.load(); // so the board is fresh when you switch to it
   }
@@ -90,9 +97,10 @@
     if (!$("ask").hidden) { $("ask-no").click(); return; }
     if (!$("qs").hidden) { $("qs-no").click(); return; }
     if (!$("more").hidden) { $("more").hidden = true; return; }
-    if (tab === "board") window.LEBoard.escape(); else window.LEHub.escape();
+    if (tab === "board") window.LEBoard.escape(); else if (tab === "hub") window.LEHub.escape(); else window.LEAtlas.escape();
   });
   document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState !== "visible" && started && tab === "atlas") window.LEAtlas.hidden(); // stop listening and talking in the background
     if (document.visibilityState !== "visible" || !started || !A.signedIn()) return;
     if (tab === "board" && window.LEBoard.stale() && !window.LEBoard.isOpen()) window.LEBoard.load();
     if (tab === "hub") window.LEHub.shown();

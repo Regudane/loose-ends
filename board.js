@@ -477,5 +477,14 @@
   function escape() { if (!S.open) return false; if (S.snz) { S.snz = false; renderSheet(); } else closeSheet(); return true; }
   function stale() { return !S.readAt || Date.now() - S.readAt > 90000; }
 
-  window.LEBoard = { init, load, render, escape, stale, isOpen: () => !!S.open, _state: S };
+  /* For Atlas (1.5.0, 27 Nov 2026): the board as this app shows it, and Charlie's own changes through the same
+     saving, so a note or a Done from Atlas is exactly a note or a Done from this tab. */
+  const api = {
+    ready: () => !!S.base, readAt: () => S.readAt, problem: () => S.problem, cards: () => S.cards, meta: () => S.meta,
+    card: cardById, chats: jobChats, isChat, chatLink, addReply, load,
+    replyLink: (c) => chatLink(c.chat_url) || (jobChats(c)[0] || {}).link || null,
+    change: (id, fields) => (cardById(id) ? savePhone((ch) => M.setFields(ch, id, fields, nowIso())) : Promise.resolve(false)),
+    addNote: (id, text) => { const at = nowIso(); const note = { id: noteId(at), at, text, from: "phone" }; return savePhone((ch) => M.addNote(ch, id, note, at)); },
+  };
+  window.LEBoard = { init, load, render, escape, stale, isOpen: () => !!S.open, api, _state: S };
 })();

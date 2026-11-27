@@ -3,8 +3,8 @@
   and the fonts are kept once fetched. Anything from Microsoft (sign-in, OneDrive) always goes to the network
   and is never stored here. Change VERSION with every release so phones pick up the new files.
 */
-const VERSION = "le-app-1.4.1";
-const SHELL = ["./", "index.html", "styles.css", "config.js", "merge.js", "auth.js", "graph.js", "common.js", "board.js", "workhub.js", "app.js",
+const VERSION = "le-app-1.5.0";
+const SHELL = ["./", "index.html", "styles.css", "atlas.css", "config.js", "merge.js", "auth.js", "graph.js", "common.js", "board.js", "workhub.js", "atlas.js", "app.js",
   "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"];
 const FONTS = "le-fonts-1";
 
@@ -35,5 +35,5 @@ self.addEventListener("fetch", (e) => {
       return hit || net;
     })));
   }
-  // Everything else (Microsoft sign-in, Graph, OneDrive downloads): straight to the network, never stored.
+  // Everything else (Microsoft sign-in, Graph, OneDrive downloads, Atlas's Claude API): straight to the network, never stored.
 });

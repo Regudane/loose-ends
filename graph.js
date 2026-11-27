@@ -90,5 +90,12 @@
     return r.json();
   }
 
-  window.LEGraph = { list, item, text, parse, readJson, putJson };
+  /* Writes a text file (Atlas's saved conversations, 1.5.0), over any file of that name. */
+  async function putText(path, body, type) {
+    const r = await call("PUT", "/me/drive/root:/" + enc(path) + ":/content", { headers: { "Content-Type": type || "text/plain; charset=utf-8" }, body });
+    if (!r.ok) throw await problem(r);
+    return r.json();
+  }
+
+  window.LEGraph = { list, item, text, parse, readJson, putJson, putText };
 })();

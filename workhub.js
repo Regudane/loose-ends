@@ -169,24 +169,29 @@
     }
   }
 
-  async function run(where, item, btn) {
-    if (!S.pair) { L.toast("Pair this phone with your laptop first. It's at the top of Work hub."); return; }
-    if (!S.snap) return;
+  /* opts (Atlas, 1.5.0): preset, its answers to fill in the job's questions (Charlie still taps Start it);
+     confirmed, Charlie has already said yes to this job in Atlas; quiet, Atlas says how it went, so no toast.
+     Resolves the run, or null when nothing went. */
+  async function run(where, item, btn, opts) {
+    opts = opts || {};
+    if (!S.pair) { L.toast("Pair this phone with your laptop first. It's at the top of Work hub."); return null; }
+    if (!S.snap) return null;
     const key = await L.idbGet("phone-key").catch(() => null);
-    if (!key || key.id !== S.pair.phone) { L.toast("This phone's pairing key is gone, so the laptop won't trust it. Pair again from More.", null, true); return; }
+    if (!key || key.id !== S.pair.phone) { L.toast("This phone's pairing key is gone, so the laptop won't trust it. Pair again from More.", null, true); return null; }
     const pc = S.pair.computer;
     let answers = null, said = [];
     if (btn.questions && Array.isArray(btn.questions.ask) && btn.questions.ask.length) {
-      const res = await askQuestions(item, btn, pc); // also the yes for a live job
-      if (!res) return;
+      const asked = Array.isArray(opts.preset) && opts.preset.length ? Object.assign({}, btn, { questions: Object.assign({}, btn.questions, { preset: opts.preset }) }) : btn;
+      const res = await askQuestions(item, asked, pc); // also the yes for a live job
+      if (!res) return null;
       if (res.answers) { answers = res.answers; said = res.said; }
-    } else if (btn.live || (btn.questions && btn.questions.note)) {
+    } else if (!opts.confirmed && (btn.live || (btn.questions && btn.questions.note))) {
       // a live job, or one whose questions are all on the laptop (its note says what they are)
       const what = /^start$/i.test(btn.label) ? item.title : btn.label;
       const note = btn.questions && btn.questions.note ? btn.questions.note + " " : "";
       const ok = await L.ask("Start " + what + " on " + pc + "?", (btn.live ? "It writes to " + (btn.liveWhat || "a live system") + ". " : "") + note +
         "It opens in its own window on the laptop, the same as pressing it in Work hub.", "Start it");
-      if (!ok) return;
+      if (!ok) return null;
     }
     const at = L.nowIso();
     const q = { v: 1, id: "r" + Date.now().toString(36) + "-" + L.rand(8), at, phone: S.pair.phone, computer: pc, where, item: item.id, index: btn.index,
@@ -199,7 +204,7 @@
       await G.putJson(RUN + "/requests/" + L.stamp(at) + "-" + q.id + ".json", q, { create: true });
       r.state = "waiting";
       const on = laptopOn();
-      L.toast(!on ? "Sent, but " + pc + " looks asleep. It runs only if the laptop picks it up within " + FRESH_MIN + " minutes."
+      if (!opts.quiet) L.toast(!on ? "Sent, but " + pc + " looks asleep. It runs only if the laptop picks it up within " + FRESH_MIN + " minutes."
         : fastOn() ? "Sent. It starts on " + pc + " in a few seconds."
         : "Sent. It starts on " + pc + " in a minute or two, and its answer shows here a few minutes later.");
     } catch (e) {
@@ -207,6 +212,7 @@
       if (e && e.code === "signin") window.dispatchEvent(new CustomEvent("le:signin"));
     }
     saveRuns(); render(); schedule();
+    return r;
   }
 
   /* ---------- a job's questions, answered here before it starts (25 Nov 2026) ----------
@@ -414,8 +420,8 @@
     });
     saveTicks();
   }
-  async function tick(item, done) {
-    if (!S.snap || !S.snap.hub) { L.toast("Work hub isn't in your OneDrive, so ticks can't go from here.", null, true); return; }
+  async function tick(item, done, quiet) { // quiet: Atlas says it was ticked, so no toast (a problem still shows)
+    if (!S.snap || !S.snap.hub) { L.toast("Work hub isn't in your OneDrive, so ticks can't go from here.", null, true); return false; }
     const at = L.nowIso(), date = L.today(), block = tickFile(item);
     const rep = item.repeat || "once";
     const t = { job: item.id, block, done, date, at };
@@ -425,11 +431,13 @@
     const note = { from: "Loose Ends app on Charlie's phone", written_at: at, ticks: [{ job: item.id, done, date, block }] };
     try {
       await G.putJson(S.snap.hub + "/inbox/" + L.stamp(at) + "-" + item.id + "-" + L.rand(4) + ".json", note, { create: true });
-      L.toast(done ? "Ticked. Work hub files it next time it's open." : "Unticked. Work hub files it next time it's open.");
+      if (!quiet) L.toast(done ? "Ticked. Work hub files it next time it's open." : "Unticked. Work hub files it next time it's open.");
+      return true;
     } catch (e) {
       S.ticks = before; saveTicks(); render();
       if (e && e.code === "signin") window.dispatchEvent(new CustomEvent("le:signin"));
       L.toast("Not ticked. " + L.problemFor(e), null, true);
+      return false;
     }
   }
 
@@ -788,5 +796,10 @@
   function escape() { if (!S.open) return false; closePanel(); return true; }
   function info() { return { pair: S.pair, computer: mine() }; }
 
-  window.LEHub = { init, load, shown, render, escape, unpair, info, replyReady, sendReply, _state: S, _signedText: signedText, _pairCode: pairCode };
+  /* For Atlas (1.5.0, 27 Nov 2026): Work hub as this tab works it out, and the same ticks and runs. */
+  const api = {
+    snap: () => S.snap, pair: () => S.pair, runs: () => S.runs, readAt: () => S.readAt, problem: () => S.problem,
+    findItem, status, tickState, tickFile, repeatText, laptopOn, fastOn, mine, runnerVersion, run, tick, load, STAGE_NAME, WHO,
+  };
+  window.LEHub = { init, load, shown, render, escape, unpair, info, replyReady, sendReply, api, _state: S, _signedText: signedText, _pairCode: pairCode };
 })();
