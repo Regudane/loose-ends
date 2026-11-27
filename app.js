@@ -4,7 +4,7 @@
   "use strict";
   const L = window.LE, A = window.LEAuth;
   const { $, esc } = L;
-  const VERSION = "1.5.0";
+  const VERSION = "1.5.1";
   const THEME = { board: "#18211c", hub: "#0c131d", atlas: "#0b1222" };
   const TABS = ["board", "hub", "atlas"];
   let tab = L.lsGet("tab", "board");

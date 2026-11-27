@@ -3,7 +3,7 @@
   and the fonts are kept once fetched. Anything from Microsoft (sign-in, OneDrive) always goes to the network
   and is never stored here. Change VERSION with every release so phones pick up the new files.
 */
-const VERSION = "le-app-1.5.0";
+const VERSION = "le-app-1.5.1";
 const SHELL = ["./", "index.html", "styles.css", "atlas.css", "config.js", "merge.js", "auth.js", "graph.js", "common.js", "board.js", "workhub.js", "atlas.js", "app.js",
   "manifest.webmanifest", "icons/icon-180.png", "icons/icon-192.png", "icons/icon-512.png", "icons/icon-maskable-512.png"];
 const FONTS = "le-fonts-1";

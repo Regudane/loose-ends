@@ -74,6 +74,7 @@
   if (synth) { loadVoices(); try { synth.addEventListener("voiceschanged", loadVoices); } catch (e) {} }
   const englishVoices = () => voices.filter((v) => /^en[-_]/i.test(v.lang || ""));
   function pickVoice() {
+    if (!voices.length) loadVoices(); // some phones fill the list late and never say so
     if (set.voice) { const v = voices.find((x) => x.name === set.voice); if (v) return v; }
     const en = englishVoices();
     return en.find((v) => /^en[-_]GB/i.test(v.lang) && /\b(Daniel|Arthur|Oliver|Malcolm|Fred|Jamie)\b/i.test(v.name)) || en.find((v) => /^en[-_]GB/i.test(v.lang)) ||
@@ -140,6 +141,14 @@
   /* ---------- listening, with the iPhone's own dictation ---------- */
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition || null;
   const R = { rec: null, on: false, text: "", resolve: null, timer: null, broken: "", noAuto: false };
+  /* When the phone won't listen inside the app: the short reason stays under the box, and how to fix it shows in a
+     toast that stays until OK. Typing still works, and the keyboard's own microphone types what he says. */
+  const TYPE_TIP = "Or talk with the keyboard's microphone; to hear Atlas answer, turn on Speak answers to typing too in its settings.";
+  function cantListen(reason, fix) {
+    R.broken = reason;
+    L.toast(reason + " " + (fix ? fix + " " : "") + TYPE_TIP, null, true);
+    paintState();
+  }
   /* Resolves what Charlie said, or "" when he said nothing within wait ms. auto: Atlas started it by itself (after
      an answer), which iOS may refuse without a tap; then only the follow-ups stop, and the ring still works. */
   function hear(wait, auto) {
@@ -147,7 +156,7 @@
       if (!SR || R.broken) { resolve(""); return; }
       stopHearing(true);
       let rec;
-      try { rec = new SR(); } catch (e) { R.broken = "This phone won't listen here."; resolve(""); return; }
+      try { rec = new SR(); } catch (e) { cantListen("This phone won't listen inside the app."); resolve(""); return; }
       rec.lang = "en-AU"; rec.interimResults = true; rec.continuous = false; rec.maxAlternatives = 1;
       R.rec = rec; R.on = true; R.text = ""; R.resolve = resolve;
       const finish = () => {
@@ -167,12 +176,12 @@
       };
       rec.onerror = (ev) => {
         if ((ev.error === "not-allowed" || ev.error === "service-not-allowed") && auto) R.noAuto = true;
-        else if (ev.error === "not-allowed" || ev.error === "service-not-allowed") R.broken = "Atlas isn't allowed to listen on this phone. In Settings, Safari (or Screen Time), allow the microphone and speech recognition, or use the microphone on your keyboard.";
-        else if (ev.error === "audio-capture") R.broken = "No microphone found.";
+        else if (ev.error === "not-allowed" || ev.error === "service-not-allowed") cantListen("Atlas isn't allowed to listen.", "To fix it, turn on Dictation (search Settings for Dictation) and set Safari's Microphone setting to Ask, then tap the ring and allow it.");
+        else if (ev.error === "audio-capture") cantListen("No microphone found.");
         finish();
       };
       rec.onend = finish;
-      try { rec.start(); } catch (e) { if (auto) R.noAuto = true; else R.broken = "This phone won't listen here. Use the microphone on your keyboard."; finish(); return; }
+      try { rec.start(); } catch (e) { if (auto) R.noAuto = true; else cantListen("This phone won't listen inside the app."); finish(); return; }
       R.timer = setTimeout(() => { if (!R.text) { try { rec.stop(); } catch (e) {} } }, wait || 9000);
       paintState();
     });
@@ -989,9 +998,10 @@ Rules
     unlockVoice();
     if (R.on) { stopHearing(false); return; }
     if (V.pending) { hush(); return; }
+    if (C.busy && !UI.confirm) { if (C.abort) C.abort.abort(); return; }
+    if (!SR) { $("a-text").focus(); L.toast("This phone won't listen inside the app. " + TYPE_TIP, null, true); return; }
+    R.broken = ""; // a tap always tries again, in case he has just allowed it
     if (UI.confirm) { const said = await hear(9000); if (said && UI.confirm) UI.confirm.end(yesNo(said) || "other", said); return; }
-    if (C.busy) { if (C.abort) C.abort.abort(); return; }
-    if (!SR || R.broken) { $("a-text").focus(); L.toast(R.broken || "This phone won't listen inside the app. Tap the microphone on your keyboard to talk."); return; }
     const said = await hear(9000);
     if (said) converse(said); else paintState();
   }
